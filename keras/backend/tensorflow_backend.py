@@ -1046,63 +1046,90 @@ def rnn(step_function, inputs, initial_states,
     assert ndim >= 3, "Input should be at least 3D."
     axes = [1, 0] + list(range(2, ndim))
     inputs = tf.transpose(inputs, (axes))
-    input_list = tf.unpack(inputs)
     if constants is None:
         constants = []
 
-    states = initial_states
-    successive_states = []
-    successive_outputs = []
-    if go_backwards:
-        input_list.reverse()
+    if unroll:
+        states = initial_states
+        successive_states = []
+        successive_outputs = []
 
-    if mask is not None:
-        # Transpose not supported by bool tensor types, hence round-trip to uint8.
-        mask = tf.cast(mask, tf.uint8)
-        if len(mask.get_shape()) == ndim-1:
-            mask = expand_dims(mask)
-        mask = tf.cast(tf.transpose(mask, axes), tf.bool)
-        mask_list = tf.unpack(mask)
-
+        input_list = tf.unpack(inputs)
         if go_backwards:
-            mask_list.reverse()
+            input_list.reverse()
 
-        for input, mask_t in zip(input_list, mask_list):
-            output, new_states = step_function(input, states + constants)
+        if mask is not None:
+            # Transpose not supported by bool tensor types, hence round-trip to uint8.
+            mask = tf.cast(mask, tf.uint8)
+            if len(mask.get_shape()) == ndim-1:
+                mask = expand_dims(mask)
+            mask = tf.cast(tf.transpose(mask, axes), tf.bool)
+            mask_list = tf.unpack(mask)
 
-            # tf.select needs its condition tensor to be the same shape as its two
-            # result tensors, but in our case the condition (mask) tensor is
-            # (nsamples, 1), and A and B are (nsamples, ndimensions). So we need to
-            # broadcast the mask to match the shape of A and B. That's what the
-            # tile call does, is just repeat the mask along its second dimension
-            # ndimensions times.
-            tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(output)[1]]))
+            if go_backwards:
+                mask_list.reverse()
 
-            if len(successive_outputs) == 0:
-                prev_output = zeros_like(output)
-            else:
-                prev_output = successive_outputs[-1]
+            for input, mask_t in zip(input_list, mask_list):
+                output, new_states = step_function(input, states + constants)
 
-            output = tf.select(tiled_mask_t, output, prev_output)
+                # tf.select needs its condition tensor to be the same shape as its two
+                # result tensors, but in our case the condition (mask) tensor is
+                # (nsamples, 1), and A and B are (nsamples, ndimensions). So we need to
+                # broadcast the mask to match the shape of A and B. That's what the
+                # tile call does, is just repeat the mask along its second dimension
+                # ndimensions times.
+                tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(output)[1]]))
 
-            return_states = []
-            for state, new_state in zip(states, new_states):
-                # (see earlier comment for tile explanation)
-                tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(new_state)[1]]))
-                return_states.append(tf.select(tiled_mask_t, new_state, state))
+                if len(successive_outputs) == 0:
+                    prev_output = zeros_like(output)
+                else:
+                    prev_output = successive_outputs[-1]
 
-            states = return_states
-            successive_outputs.append(output)
-            successive_states.append(states)
-    else:
-        for input in input_list:
-            output, states = step_function(input, states + constants)
-            successive_outputs.append(output)
-            successive_states.append(states)
+                output = tf.select(tiled_mask_t, output, prev_output)
 
-    last_output = successive_outputs[-1]
-    outputs = tf.pack(successive_outputs)
-    new_states = successive_states[-1]
+                return_states = []
+                for state, new_state in zip(states, new_states):
+                    # (see earlier comment for tile explanation)
+                    tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(new_state)[1]]))
+                    return_states.append(tf.select(tiled_mask_t, new_state, state))
+
+                states = return_states
+                successive_outputs.append(output)
+                successive_states.append(states)
+
+        else: # Mask is None
+            for input in input_list:
+                output, states = step_function(input, states + constants)
+                successive_outputs.append(output)
+                successive_states.append(states)
+
+            last_output = successive_outputs[-1]
+            outputs = tf.pack(successive_outputs)
+            new_states = successive_states[-1]
+
+    else: # Unroll is False
+
+        if mask is not None:
+            raise NotImplementedError('Unrolled loops with masking still not implemented.')
+        else: # Mask is None
+            def _step(prev, input):
+                _, new_states = step_function(input, tf.unpack(prev) + constants)
+                return tf.pack(new_states)
+
+            results = tf.scan(_step,
+                              inputs,
+                              initializer=tf.pack(initial_states),
+                              swap_memory=True,
+                              name='rnn_scan',
+                              back_prop=True,
+                              parallel_iterations=10)
+
+            successive_outputs = results[:, 0, :, :]
+            successive_states  = results[:, 1:, :, :]
+
+            outputs = successive_outputs
+            last_output = tf.reverse(successive_outputs, [True, False, False])[0, :, :]
+            new_states  = tf.reverse(successive_states, [True, False, False, False])[0, :, :, :]
 
     axes = [1, 0] + list(range(2, len(outputs.get_shape())))
     outputs = tf.transpose(outputs, axes)
