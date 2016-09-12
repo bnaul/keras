@@ -154,6 +154,7 @@ PAGES = [
             convolutional.Convolution1D,
             convolutional.AtrousConvolution1D,
             convolutional.Convolution2D,
+            convolutional.AtrousConvolution1D,
             convolutional.AtrousConvolution2D,
             convolutional.SeparableConvolution2D,
             convolutional.Deconvolution2D,

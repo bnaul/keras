@@ -1056,6 +1056,57 @@ class Highway(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
+class ScalarSkipConnection(Layer):
+    '''TODO'''
+
+    def __init__(self, init='uniform', weights=None, W_regularizer=None, W_constraint=None, input_dim=None,
+                 **kwargs):
+        self.init = initializations.get(init)
+
+        self.W_regularizer = regularizers.get(W_regularizer)
+
+        self.W_constraint = constraints.get(W_constraint)
+
+        self.initial_weights = weights
+        self.input_spec = [InputSpec(ndim=3)]
+
+        self.input_dim = input_dim
+        if self.input_dim:
+            kwargs['input_shape'] = (self.input_dim,)
+        super(ScalarSkipConnection, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.input_spec = [InputSpec(dtype=K.floatx())]
+
+        # TODO: Initialization?
+        self.W = K.variable(1, name='{}_W'.format(self.name))
+        self.trainable_weights = [self.W]
+
+        self.regularizers = []
+        if self.W_regularizer:
+            self.W_regularizer.set_param(self.W)
+            self.regularizers.append(self.W_regularizer)
+
+        self.constraints = {}
+        if self.W_constraint:
+            self.constraints[self.W] = self.W_constraint
+
+        if self.initial_weights is not None:
+            self.set_weights(self.initial_weights)
+            del self.initial_weights
+
+    def call(self, x, mask=None):
+        output = self.W * x
+        return output
+
+    def get_config(self):
+        config = {'init': self.init.__name__,
+                  'W_regularizer': self.W_regularizer.get_config() if self.W_regularizer else None,
+                  'W_constraint': self.W_constraint.get_config() if self.W_constraint else None,
+                  'input_dim': self.input_dim}
+        base_config = super(ScalarSkipConnection, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 class TimeDistributedDense(Layer):
     '''Apply a same Dense layer for each dimension[1] (time_dimension) input.
     Especially useful after a recurrent network with 'return_sequence=True'.

@@ -836,6 +836,13 @@ def squeeze(x, axis):
     return tf.squeeze(x, [axis])
 
 
+def temporal_pre_padding(x, padding=1):
+    '''Prepends the middle dimension of a 3D tensor
+    with "padding" zeros.
+    '''
+    pattern = [[0, 0], [padding, ], [0, 0]]
+    return tf.pad(x, pattern)
+
 def temporal_padding(x, padding=1):
     '''Pads the middle dimension of a 3D tensor
     with "padding" zeros left and right.

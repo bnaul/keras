@@ -652,6 +652,135 @@ class Deconvolution2D(Convolution2D):
         return dict(list(base_config.items()) + list(config.items()))
 
 
+class AtrousConvolution1D(Convolution1D):
+    '''Atrous Convolution operator for filtering neighborhoods of one-dimensional inputs.
+       A.k.a dilated convolution or convolution with holes.
+       When using this layer as the first layer in a model,
+       either provide the keyword argument `input_dim`
+       (int, e.g. 128 for sequences of 128-dimensional vectors),
+       or `input_shape` (tuple of integers, e.g. (10, 128) for sequences
+       of 10 vectors of 128-dimensional vectors).
+
+       # Example
+
+       ```python
+           # apply a convolution 1d of length 3 with atrous rate 2 to a sequence with 10 timesteps,
+           # with 64 output filters
+           model = Sequential()
+           model.add(AtrousConvolution1D(64, 3, atrous_rate=2, border_mode='valid', input_shape=(10, 32)))
+           # now the actual kernel length is dilated from 3 to 5 (3+(3-1)*(2-1)=5)
+           # thus model.output_shape == (None, 6, 64)
+       ```
+
+       # Arguments
+           nb_filter: Number of convolution kernels to use
+               (dimensionality of the output).
+           filter_length: The extension (spatial or temporal) of each filter.
+           init: name of initialization function for the weights of the layer
+               (see [initializations](../initializations.md)),
+               or alternatively, Theano function to use for weights initialization.
+               This parameter is only relevant if you don't pass a `weights` argument.
+           activation: name of activation function to use
+               (see [activations](../activations.md)),
+               or alternatively, elementwise Theano function.
+               If you don't specify anything, no activation is applied
+               (ie. "linear" activation: a(x) = x).
+           weights: list of numpy arrays to set as initial weights.
+           border_mode: 'valid' or 'same'.
+           subsample_length: factor by which to subsample output.
+
+           atrous_rate: tuple of length 2. Factor for kernel dilation.
+            Also called filter_dilation elsewhere.
+           W_regularizer: instance of [WeightRegularizer](../regularizers.md)
+               (eg. L1 or L2 regularization), applied to the main weights matrix.
+           b_regularizer: instance of [WeightRegularizer](../regularizers.md),
+               applied to the bias.
+           activity_regularizer: instance of [ActivityRegularizer](../regularizers.md),
+               applied to the network output.
+           W_constraint: instance of the [constraints](../constraints.md) module
+               (eg. maxnorm, nonneg), applied to the main weights matrix.
+           b_constraint: instance of the [constraints](../constraints.md) module,
+               applied to the bias.
+           bias: whether to include a bias
+               (i.e. make the layer affine rather than linear).
+           input_dim: Number of channels/dimensions in the input.
+               Either this argument or the keyword argument `input_shape`must be
+               provided when using this layer as the first layer in a model.
+           input_length: Length of input sequences, when it is constant.
+               This argument is required if you are going to connect
+               `Flatten` then `Dense` layers upstream
+               (without it, the shape of the dense outputs cannot be computed).
+
+       # Input shape
+           3D tensor with shape: `(samples, steps, input_dim)`.
+
+       # Output shape
+           3D tensor with shape: `(samples, new_steps, nb_filter)`.
+           `steps` value might have changed due to padding.
+
+       # References
+           - [Multi-Scale Context Aggregation by Dilated Convolutions](https://arxiv.org/abs/1511.07122)
+       '''
+
+    def __init__(self, nb_filter, filter_length,
+                 init='uniform', activation='linear', weights=None,
+                 border_mode='valid', subsample_length=1,
+                 atrous_rate=1,
+                 W_regularizer=None, b_regularizer=None, activity_regularizer=None,
+                 W_constraint=None, b_constraint=None,
+                 bias=True, input_dim=None, input_length=None, causal=False, **kwargs):
+
+        if border_mode not in {'valid', 'same'}:
+            raise Exception('Invalid border mode for AtrousConv2D:', border_mode)
+
+        self.atrous_rate = (atrous_rate, 1)
+        if causal and border_mode != 'valid':
+            raise ValueError("Causal Convolution requires border_mode='valid'.")
+        self.causal = causal
+
+        super(AtrousConvolution1D, self).__init__(nb_filter, filter_length,
+                                                  init=init, activation=activation,
+                                                  weights=weights, border_mode=border_mode,
+                                                  subsample_length=subsample_length,
+                                                  W_regularizer=W_regularizer, b_regularizer=b_regularizer,
+                                                  activity_regularizer=activity_regularizer,
+                                                  W_constraint=W_constraint, b_constraint=b_constraint,
+                                                  bias=bias, input_dim=input_dim, input_length=input_length, **kwargs)
+
+    def get_output_shape_for(self, input_shape):
+        input_length = input_shape[1]
+        if self.causal:
+            input_length += self.atrous_rate[0]
+        length = conv_output_length(input_length,
+                                    self.filter_length,
+                                    self.border_mode,
+                                    self.subsample[0],
+                                    self.atrous_rate[0])
+        return (input_shape[0], length, self.nb_filter)
+
+    def call(self, x, mask=None):
+        if self.causal:
+            x = K.temporal_pre_padding(x, self.atrous_rate[0])
+        x = K.expand_dims(x, -1)  # add a dimension of the right
+        x = K.permute_dimensions(x, (0, 2, 1, 3))
+        output = K.conv2d(x, self.W, strides=self.subsample,
+                          border_mode=self.border_mode,
+                          dim_ordering='th',
+                          filter_dilation=self.atrous_rate)
+        if self.bias:
+            output += K.reshape(self.b, (1, self.nb_filter, 1, 1))
+        output = K.squeeze(output, 3)  # remove the dummy 3rd dimension
+        output = K.permute_dimensions(output, (0, 2, 1))
+        output = self.activation(output)
+        return output
+
+    def get_config(self):
+        config = {'atrous_rate': self.atrous_rate}
+        config = {'causal': self.causal}
+        base_config = super(AtrousConvolution1D, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
 class AtrousConvolution2D(Convolution2D):
     '''Atrous Convolution operator for filtering windows of two-dimensional inputs.
     A.k.a dilated convolution or convolution with holes.
@@ -1581,7 +1710,7 @@ class Cropping1D(Layer):
 
     def call(self, x, mask=None):
         input_shape = self.input_spec[0].shape
-        return x[:, self.cropping[0]:input_shape[1]-self.cropping[1], :]
+        return x[:, self.cropping[0]:input_shape[1] - self.cropping[1], :]
 
     def get_config(self):
         config = {'cropping': self.cropping}
@@ -1659,9 +1788,9 @@ class Cropping2D(Layer):
         input_shape = self.input_spec[0].shape
         if self.dim_ordering == 'th':
             return x[:,
-                     :,
-                     self.cropping[0][0]:input_shape[2]-self.cropping[0][1],
-                     self.cropping[1][0]:input_shape[3]-self.cropping[1][1]]
+                   :,
+                   self.cropping[0][0]:input_shape[2]-self.cropping[0][1],
+                   self.cropping[1][0]:input_shape[3]-self.cropping[1][1]]
         elif self.dim_ordering == 'tf':
             return x[:,
                      self.cropping[0][0]:input_shape[1]-self.cropping[0][1],
@@ -1739,10 +1868,10 @@ class Cropping3D(Layer):
         input_shape = self.input_spec[0].shape
         if self.dim_ordering == 'th':
             return x[:,
-                     :,
-                     self.cropping[0][0]:input_shape[2]-self.cropping[0][1],
-                     self.cropping[1][0]:input_shape[3]-self.cropping[1][1],
-                     self.cropping[2][0]:input_shape[4]-self.cropping[2][1]]
+                   :,
+                   self.cropping[0][0]:input_shape[2]-self.cropping[0][1],
+                   self.cropping[1][0]:input_shape[3]-self.cropping[1][1],
+                   self.cropping[2][0]:input_shape[4]-self.cropping[2][1]]
         elif self.dim_ordering == 'tf':
             return x[:,
                      self.cropping[0][0]:input_shape[1]-self.cropping[0][1],

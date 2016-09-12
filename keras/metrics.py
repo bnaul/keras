@@ -16,6 +16,18 @@ def sparse_categorical_accuracy(y_true, y_pred):
                           K.cast(K.argmax(y_pred, axis=-1), K.floatx())))
 
 
+def sparse_categorical_mean_squared_error(y_true, y_pred):
+    """MSE for sparse categorical variables."""
+    return K.mean(K.square(K.max(y_true, axis=-1) -
+                           K.cast(K.argmax(y_pred, axis=-1), K.floatx())))
+
+
+def categorical_mean_squared_error(y_true, y_pred):
+    """MSE for categorical variables."""
+    return K.mean(K.square(K.argmax(y_true, axis=-1) -
+                           K.argmax(y_pred, axis=-1)))
+
+
 def mean_squared_error(y_true, y_pred):
     return K.mean(K.square(y_pred - y_true))
 

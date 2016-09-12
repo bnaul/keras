@@ -108,6 +108,7 @@ def convert_all_kernels_in_model(model):
         'Convolution2D',
         'Convolution3D',
         'AtrousConvolution2D',
+        'AtrousConvolution1D',
         'Deconvolution2D',
     }
     to_assign = []
