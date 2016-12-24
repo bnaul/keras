@@ -924,7 +924,8 @@ class PhasedLSTM(Recurrent):
                  forget_bias_init='one', activation='tanh',
                  inner_activation='hard_sigmoid',
                  W_regularizer=None, U_regularizer=None, b_regularizer=None,
-                 dropout_W=0., dropout_U=0., alpha=0.001, **kwargs):
+                 dropout_W=0., dropout_U=0., alpha=0.001,
+                 custom_times=True, **kwargs):
         self.output_dim = output_dim
         self.init = initializations.get(init)
         self.inner_init = initializations.get(inner_init)
@@ -936,6 +937,7 @@ class PhasedLSTM(Recurrent):
         self.b_regularizer = regularizers.get(b_regularizer)
         self.dropout_W, self.dropout_U = dropout_W, dropout_U
         self.alpha = alpha
+        self.custom_times = custom_times
 
         if self.dropout_W or self.dropout_U:
             self.uses_learning_phase = True
@@ -1017,7 +1019,10 @@ class PhasedLSTM(Recurrent):
         # time related variables, simply add +1 to t for now...starting from 0
         # need to find better way if asynchronous/irregular time input is desired
         # such as slicing input where first index is time and using that instead.
-        t = t_tm1 + 1
+        if self.custom_times:
+            t = t_tm1 + K.expand_dims(x[:, 0])
+        else:
+            t = t_tm1 + 1
         self.timegate = K.abs(self.timegate)
         period = self.timegate[0]
         shift = self.timegate[1]
@@ -1030,8 +1035,8 @@ class PhasedLSTM(Recurrent):
 
         # K.switch not consistent between Theano and Tensorflow backend, so write explicitly.
         up = K.cast(K.lesser(phi, r_on * 0.5), K.floatx()) * 2 * phi / r_on
-        mid = K.cast(K.lesser(phi, r_on), K.floatx()) *\
-        	  K.cast(K.greater(phi, r_on * 0.5), K.floatx()) * (2 - (2 * phi / r_on))
+        mid = (K.cast(K.lesser(phi, r_on), K.floatx()) *
+               K.cast(K.greater(phi, r_on * 0.5), K.floatx()) * (2 - (2 * phi / r_on)))
         end = K.cast(K.greater(phi, r_on * 0.5), K.floatx()) * self.alpha * phi
         k = up + mid + end
 
